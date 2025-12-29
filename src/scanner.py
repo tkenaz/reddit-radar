@@ -2,14 +2,15 @@
 """
 Reddit Radar Scanner - Automated lead discovery from Reddit.
 
-Searches Reddit for relevant posts based on your keywords configuration
-and sends notifications through your configured channels.
+Searches Reddit for relevant posts based on your keywords configuration,
+classifies them by intent using AI, and sends notifications.
 
 Usage:
-  python -m src.scanner [--dry-run] [--config PATH]
+  python -m src.scanner [--dry-run] [--classify] [--config PATH]
 
 Options:
   --dry-run     Print results to console instead of sending notifications
+  --classify    Enable AI intent classification (requires ANTHROPIC_API_KEY)
   --config      Path to keywords config file (default: config/keywords.yaml)
 """
 
@@ -22,6 +23,7 @@ from typing import List, Dict, Any, Optional
 
 from .reddit_client import RedditClient
 from .notifier import get_notifier, Notification, Priority
+from .classifier import get_classifier, Intent, Classification
 
 # Setup logging
 logging.basicConfig(
@@ -37,6 +39,15 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "keywords.yaml"
 
+# Intent emoji mapping
+INTENT_EMOJI = {
+    Intent.HOT_LEAD: "🔥",
+    Intent.PARTNERSHIP: "🤝",
+    Intent.CONTENT_IDEA: "💡",
+    Intent.COMPETITOR: "👀",
+    Intent.NOISE: "⚪",
+}
+
 
 def load_config(config_path: Path) -> Dict[str, Any]:
     """Load keywords configuration from YAML file."""
@@ -50,14 +61,14 @@ def load_config(config_path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def score_post(post: Dict[str, Any], config: Dict[str, Any]) -> float:
+def score_post(post: Dict[str, Any], config: Dict[str, Any], classification: Optional[Classification] = None) -> float:
     """
     Calculate relevance score for a post.
 
     Scoring:
     - Base: score + (comments * 2)
     - Subreddit priority boost
-    - Recency boost (newer posts scored higher)
+    - Intent boost (hot leads get 2x, partnerships 1.5x)
     """
     base_score = post['score'] + (post['num_comments'] * 2)
 
@@ -66,7 +77,17 @@ def score_post(post: Dict[str, Any], config: Dict[str, Any]) -> float:
     subreddit_prefs = config.get('subreddit_preferences', {})
     priority_boost = subreddit_prefs.get(subreddit, {}).get('priority_boost', 1.0)
 
-    final_score = base_score * priority_boost
+    # Intent boost
+    intent_boost = 1.0
+    if classification:
+        if classification.intent == Intent.HOT_LEAD:
+            intent_boost = 2.0 * classification.confidence
+        elif classification.intent == Intent.PARTNERSHIP:
+            intent_boost = 1.5 * classification.confidence
+        elif classification.intent == Intent.CONTENT_IDEA:
+            intent_boost = 1.2 * classification.confidence
+
+    final_score = base_score * priority_boost * intent_boost
 
     return final_score
 
@@ -114,33 +135,54 @@ def search_category(
                 logger.error(f"    Error searching '{keyword}' in r/{subreddit}: {e}")
 
     # Deduplicate by post ID
-    unique_posts = {p['id']: p for p in all_posts}.values()
+    unique_posts = list({p['id']: p for p in all_posts}.values())
 
-    # Score and sort
-    scored_posts = [(score_post(p, config), p) for p in unique_posts]
-    scored_posts.sort(reverse=True, key=lambda x: x[0])
+    logger.info(f"  Category result: {len(unique_posts)} unique posts found")
+    return unique_posts
 
-    # Return top N
-    max_posts = config.get('notification', {}).get('max_posts_per_category', 5)
-    top_posts = [p for score, p in scored_posts[:max_posts]]
 
-    logger.info(f"  Category result: {len(top_posts)} top posts selected")
-    return top_posts
+def classify_posts(posts: List[Dict[str, Any]], use_ai: bool = True) -> List[tuple[Dict[str, Any], Classification]]:
+    """Classify posts by intent."""
+    classifier = get_classifier()
+
+    if use_ai and classifier.is_available:
+        logger.info(f"  Classifying {len(posts)} posts with AI...")
+    else:
+        logger.info(f"  Classifying {len(posts)} posts with rules (AI not available)...")
+
+    results = []
+    for post in posts:
+        classification = classifier.classify(post)
+        results.append((post, classification))
+        logger.info(f"    {INTENT_EMOJI.get(classification.intent, '?')} {classification.intent.value}: {post['title'][:50]}...")
+
+    return results
 
 
 def format_results_message(
-    results: Dict[str, List[Dict[str, Any]]],
-    config: Dict[str, Any]
+    results: Dict[str, List[tuple[Dict[str, Any], Classification]]],
+    config: Dict[str, Any],
+    classify_enabled: bool = False
 ) -> str:
     """Format search results as notification message."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-
     total_posts = sum(len(posts) for posts in results.values())
 
     if total_posts == 0:
         return "No relevant posts found in the last scan period."
 
-    msg = f"Found {total_posts} posts across {len([r for r in results.values() if r])} categories:\n\n"
+    # Count by intent
+    intent_counts = {intent: 0 for intent in Intent}
+    for posts in results.values():
+        for post, classification in posts:
+            intent_counts[classification.intent] += 1
+
+    msg = f"Found {total_posts} posts"
+    if classify_enabled:
+        hot = intent_counts[Intent.HOT_LEAD]
+        partner = intent_counts[Intent.PARTNERSHIP]
+        if hot or partner:
+            msg += f" ({hot} 🔥 hot leads, {partner} 🤝 partnerships)"
+    msg += ":\n\n"
 
     for category_key, posts in results.items():
         if not posts:
@@ -149,23 +191,35 @@ def format_results_message(
         category = config['categories'][category_key]
         msg += f"**{category['name']}** ({category.get('priority', 'medium')} priority)\n"
 
-        for i, post in enumerate(posts, 1):
-            msg += f"\n{i}. {post['title'][:80]}{'...' if len(post['title']) > 80 else ''}\n"
-            msg += f"   r/{post['subreddit']} | Score: {post['score']} | Comments: {post['num_comments']}\n"
-            msg += f"   {post['url']}\n"
+        for i, (post, classification) in enumerate(posts, 1):
+            emoji = INTENT_EMOJI.get(classification.intent, "")
+            title = post['title'][:70] + ('...' if len(post['title']) > 70 else '')
+
+            msg += f"\n{i}. {emoji} {title}\n"
+            msg += f"   r/{post['subreddit']} | ↑{post['score']} | 💬{post['num_comments']}"
+
+            if classify_enabled and classification.confidence >= 0.5:
+                msg += f" | {classification.intent.value} ({classification.confidence:.0%})"
+
+            msg += f"\n   {post['url']}\n"
 
         msg += "\n---\n"
 
     return msg
 
 
-def run_scan(config_path: Path = DEFAULT_CONFIG, dry_run: bool = False) -> Dict[str, Any]:
+def run_scan(
+    config_path: Path = DEFAULT_CONFIG,
+    dry_run: bool = False,
+    classify: bool = False
+) -> Dict[str, Any]:
     """
     Run the Reddit scan.
 
     Args:
         config_path: Path to keywords configuration
         dry_run: If True, print to console instead of sending notifications
+        classify: If True, use AI to classify post intents
 
     Returns:
         Dict with scan results and stats
@@ -173,6 +227,7 @@ def run_scan(config_path: Path = DEFAULT_CONFIG, dry_run: bool = False) -> Dict[
     logger.info("=" * 60)
     logger.info("Reddit Radar Scan Starting")
     logger.info(f"Mode: {'DRY RUN' if dry_run else 'PRODUCTION'}")
+    logger.info(f"AI Classification: {'ENABLED' if classify else 'DISABLED'}")
     logger.info("=" * 60)
 
     # Load config
@@ -183,34 +238,65 @@ def run_scan(config_path: Path = DEFAULT_CONFIG, dry_run: bool = False) -> Dict[
     client = RedditClient()
     logger.info("Reddit client initialized")
 
-    # Search each category
+    # Search each category and classify
     results = {}
     for category_key, category in config.get('categories', {}).items():
         posts = search_category(client, category, config)
-        results[category_key] = posts
+
+        # Classify posts
+        classified_posts = classify_posts(posts, use_ai=classify)
+
+        # Score with classification boost and sort
+        scored_posts = [
+            (score_post(p, config, c), p, c)
+            for p, c in classified_posts
+        ]
+        scored_posts.sort(reverse=True, key=lambda x: x[0])
+
+        # Take top N
+        max_posts = config.get('notification', {}).get('max_posts_per_category', 5)
+        top_posts = [(p, c) for score, p, c in scored_posts[:max_posts]]
+
+        results[category_key] = top_posts
 
     # Calculate stats
     total_posts = sum(len(posts) for posts in results.values())
+    hot_leads = sum(
+        1 for posts in results.values()
+        for p, c in posts
+        if c.intent == Intent.HOT_LEAD
+    )
+
     stats = {
         "total_posts": total_posts,
+        "hot_leads": hot_leads,
         "categories_with_results": len([r for r in results.values() if r]),
         "timestamp": datetime.now().isoformat()
     }
 
     # Send notification
     if total_posts > 0:
-        message = format_results_message(results, config)
+        message = format_results_message(results, config, classify_enabled=classify)
 
         notifier = get_notifier(include_console=dry_run)
+
+        # Determine priority based on hot leads
+        if hot_leads >= 3:
+            priority = Priority.URGENT
+        elif hot_leads >= 1:
+            priority = Priority.HIGH
+        else:
+            priority = Priority.NORMAL
+
         notification = Notification(
-            title=f"Reddit Radar: {total_posts} leads found",
+            title=f"Reddit Radar: {total_posts} posts ({hot_leads} 🔥 hot leads)",
             message=message,
-            priority=Priority.HIGH if total_posts >= 10 else Priority.NORMAL
+            priority=priority
         )
         notifier.send(notification)
 
     logger.info("=" * 60)
-    logger.info(f"Scan completed: {total_posts} posts found")
+    logger.info(f"Scan completed: {total_posts} posts, {hot_leads} hot leads")
     logger.info("=" * 60)
 
     return {
@@ -222,6 +308,7 @@ def run_scan(config_path: Path = DEFAULT_CONFIG, dry_run: bool = False) -> Dict[
 def main():
     """CLI entry point."""
     dry_run = "--dry-run" in sys.argv
+    classify = "--classify" in sys.argv
 
     # Parse config path
     config_path = DEFAULT_CONFIG
@@ -231,7 +318,7 @@ def main():
             config_path = Path(sys.argv[idx + 1])
 
     try:
-        run_scan(config_path=config_path, dry_run=dry_run)
+        run_scan(config_path=config_path, dry_run=dry_run, classify=classify)
     except FileNotFoundError as e:
         logger.error(str(e))
         sys.exit(1)
