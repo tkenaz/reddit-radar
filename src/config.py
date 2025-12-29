@@ -129,7 +129,7 @@ class AIConfig:
     """AI classification configuration."""
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
-    model: str = "claude-3-haiku-20240307"  # Default to Haiku (cheap & fast)
+    model: str = "claude-haiku-4-5"  # Default to Haiku (cheap & fast)
 
     @classmethod
     def from_env(cls) -> "AIConfig":
