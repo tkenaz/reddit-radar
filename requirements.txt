@@ -1,0 +1,18 @@
+# Reddit Radar Dependencies
+
+# Reddit API
+praw>=7.7.0
+
+# Configuration
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# HTTP requests (for notifications)
+requests>=2.28.0
+
+# Database (optional, for engagement tracking)
+psycopg2-binary>=2.9.0
+
+# AI Classification (optional)
+anthropic>=0.18.0
+# openai>=1.0.0  # Uncomment if using OpenAI instead

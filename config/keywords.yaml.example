@@ -1,0 +1,126 @@
+# Reddit Radar - Keywords Configuration
+# Copy this file to keywords.yaml and customize for your business
+#
+# This file defines:
+# - What keywords to search for
+# - Which subreddits to monitor
+# - How to score and filter results
+
+categories:
+  # Example: SaaS Product
+  product_search:
+    name: "People Looking for Solutions"
+    keywords:
+      - "looking for tool"
+      - "need software"
+      - "any recommendations"
+      - "alternative to"
+      - "best app for"
+      - "how do you handle"
+    subreddits:
+      - "SaaS"
+      - "startups"
+      - "Entrepreneur"
+      - "smallbusiness"
+    priority: high
+
+  # Example: Technical Questions (Content Ideas)
+  technical_questions:
+    name: "Technical Questions"
+    keywords:
+      - "how to"
+      - "best practice"
+      - "struggling with"
+      - "help with"
+    subreddits:
+      - "webdev"
+      - "programming"
+      - "learnprogramming"
+    priority: medium
+
+  # Example: Competitor Monitoring
+  competitor_watch:
+    name: "Competitor Mentions"
+    keywords:
+      - "CompetitorName"        # Replace with actual competitor names
+      - "alternative to CompetitorName"
+    subreddits:
+      - "SaaS"
+      - "startups"
+    priority: medium
+
+  # Example: Industry News
+  industry_news:
+    name: "Industry Discussions"
+    keywords:
+      - "your industry keyword"
+      - "your niche term"
+    subreddits:
+      - "technology"
+      - "business"
+    priority: low
+
+# Search Configuration
+search_config:
+  time_filter: "day"           # hour, day, week, month, year, all
+  results_per_query: 10        # Max results per keyword/subreddit combo
+  min_score: 5                 # Minimum upvotes to consider
+  min_comments: 2              # Minimum comments (indicates engagement)
+
+# Notification Settings
+notification:
+  max_posts_per_category: 5    # Limit results per category
+
+# Subreddit-specific settings (optional)
+# Boost relevance for certain subreddits
+subreddit_preferences:
+  startups:
+    priority_boost: 1.5
+  SaaS:
+    priority_boost: 1.3
+
+# ============================================================
+# EXAMPLES FOR DIFFERENT INDUSTRIES
+# ============================================================
+#
+# --- AI/ML Company ---
+# categories:
+#   ai_tools:
+#     name: "AI Tool Requests"
+#     keywords:
+#       - "looking for AI"
+#       - "need automation"
+#       - "AI agent"
+#       - "chatbot for"
+#     subreddits:
+#       - "artificial"
+#       - "MachineLearning"
+#       - "LocalLLaMA"
+#
+# --- Marketing Agency ---
+# categories:
+#   marketing_help:
+#     name: "Marketing Help Needed"
+#     keywords:
+#       - "need marketing help"
+#       - "looking for agency"
+#       - "social media manager"
+#       - "SEO help"
+#     subreddits:
+#       - "marketing"
+#       - "socialmedia"
+#       - "Entrepreneur"
+#
+# --- DevTools ---
+# categories:
+#   developer_pain:
+#     name: "Developer Pain Points"
+#     keywords:
+#       - "frustrated with"
+#       - "hate dealing with"
+#       - "waste time on"
+#       - "automate"
+#     subreddits:
+#       - "programming"
+#       - "webdev"
+#       - "devops"
