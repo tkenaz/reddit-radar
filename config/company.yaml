@@ -1,0 +1,136 @@
+# Kenaz GmbH - Company Profile for Response Generation
+# This file provides context for AI-generated responses
+
+company:
+  name: "Kenaz GmbH"
+  tagline: "Switzerland-based. Built for serious work, not demos."
+  location: "Swiss-registered, works globally"
+  founded: 2006
+  pivot_year: 2024  # Pivoted from localization to AI
+
+  current_focus:
+    - "Custom AI agents for businesses"
+    - "MCP server development (15+ built internally)"
+    - "Atlas platform — multi-model orchestration with infinite context"
+    - "Compliance automation (GDPR, HIPAA)"
+    - "Swiss/EU hosting for privacy-sensitive clients"
+
+# Marina's background - for establishing credibility
+founder:
+  name: "Marina"
+  background:
+    - "Linguistics PhD + finance degree"
+    - "18 years running own business"
+    - "Switched to software development in 2018 (Java)"
+    - "Deep into AI since 2023"
+    - "CTO at Predictive (edge AI, USA)"
+
+  credibility_points:
+    - "Been disrupted by AI — understands the pain from inside"
+    - "Writes production code herself, not just manages"
+    - "Linguistics background = deep understanding of language models"
+    - "Finance background = understands ROI"
+
+# Services with keywords for matching
+services:
+  mcp_development:
+    name: "MCP Server Development"
+    keywords:
+      - "MCP server"
+      - "MCP"
+      - "Claude integration"
+      - "tool use"
+      - "function calling"
+    value_prop: "Custom tools that extend Claude to interact with your specific systems"
+    examples:
+      - "Memory Systems — graph-based memory across infinite sessions"
+      - "Business Intelligence — competitor monitoring, lead generation"
+      - "Telegram/Slack Integration — real-time notifications"
+    timeline: "2-3 days (simple) to 4-8 weeks (complex)"
+    price_range: "$5k-$50k"
+
+  atlas_platform:
+    name: "Atlas Platform"
+    keywords:
+      - "context limit"
+      - "context window"
+      - "losing context"
+      - "token cost"
+      - "token usage"
+      - "multiple models"
+      - "orchestration"
+    value_prop: "Infinite sessions, multi-model routing, built-in memory layer"
+    differentiators:
+      - "Never hit context limit — running conversations for months"
+      - "Route tasks to Opus/Sonnet/Haiku/local based on requirements"
+      - "Cost analytics — token usage per task"
+      - "Deploy on-prem or Swiss servers"
+
+  workflow_automation:
+    name: "Full Workflow Automation"
+    keywords:
+      - "automation"
+      - "automate"
+      - "manual work"
+      - "repetitive"
+      - "hours spent"
+      - "monitoring"
+    value_prop: "10h/week → 30min review time"
+    examples:
+      - "Marketing: Agent monitors Reddit/HN 24/7, drafts responses, you approve"
+      - "Documentation: Semantic search across all company knowledge"
+      - "Compliance: Agent reviews every commit, flags issues"
+
+  privacy_compliance:
+    name: "Privacy & Compliance"
+    keywords:
+      - "GDPR"
+      - "HIPAA"
+      - "privacy"
+      - "on-prem"
+      - "can't use cloud"
+      - "data sovereignty"
+      - "Swiss"
+    value_prop: "Swiss hosting, on-prem deployment, GDPR/HIPAA architecture"
+    differentiators:
+      - "Cloud Act doesn't apply to Swiss servers"
+      - "Full on-prem deployment option"
+      - "No data leaves your infrastructure"
+
+# Pricing tiers for reference
+pricing:
+  tier1:
+    name: "Solo Founder Starter"
+    price: "$5,000"
+    includes: "Claude Desktop setup + 2-3 custom MCP servers"
+    timeline: "2-3 weeks"
+
+  tier2:
+    name: "Startup Automation"
+    price: "$50,000"
+    includes: "Complete workflow automation + 5-10 MCP servers"
+    timeline: "6-8 weeks"
+
+  tier3:
+    name: "Enterprise Integration"
+    price: "$100k+"
+    includes: "Full AI integration + custom Atlas deployment"
+    timeline: "3-6 months"
+
+  hourly: "$430/hour"
+
+# Red flags - when NOT to engage
+red_flags:
+  - "AI strategy without implementation"
+  - "Budget under $5k"
+  - "Chatbot for customer service"
+  - "Free POC or spec work"
+  - "Money coming from investors, do POC free"
+
+# What makes us different
+differentiators:
+  - "We build systems we use — 15+ MCP servers running our own operations"
+  - "We know when NOT to use AI — won't sell you solutions that cost more than they save"
+  - "Swiss-based = Privacy by design"
+  - "Production code, not prototypes — SOLID principles, proper error handling"
+  - "Direct communication — you talk to the person who builds"

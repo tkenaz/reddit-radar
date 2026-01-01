@@ -129,7 +129,8 @@ class AIConfig:
     """AI classification configuration."""
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
-    model: str = "claude-haiku-4-5"  # Default to Haiku (cheap & fast)
+    classifier_model: str = "claude-haiku-4-5"  # Haiku for classification (cheap & fast)
+    responder_model: str = "claude-opus-4-5-20251101"  # Opus for response generation (quality)
 
     @classmethod
     def from_env(cls) -> "AIConfig":
@@ -137,13 +138,50 @@ class AIConfig:
         return cls(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
             openai_api_key=os.getenv("OPENAI_API_KEY"),
-            model=os.getenv("AI_MODEL", cls.model)
+            classifier_model=os.getenv("AI_CLASSIFIER_MODEL", cls.classifier_model),
+            responder_model=os.getenv("AI_RESPONDER_MODEL", cls.responder_model)
         )
 
     @property
     def is_available(self) -> bool:
         """Check if any AI provider is configured."""
         return bool(self.anthropic_api_key or self.openai_api_key)
+
+    # Backward compatibility
+    @property
+    def model(self) -> str:
+        return self.classifier_model
+
+
+@dataclass
+class SchedulerConfig:
+    """Cron/scheduler configuration."""
+    interval_hours: int = 4  # Run every 4 hours by default
+    enabled: bool = True
+    run_on_start: bool = False  # Run immediately on startup
+    quiet_hours_start: Optional[int] = None  # e.g., 23 for 11 PM
+    quiet_hours_end: Optional[int] = None  # e.g., 7 for 7 AM
+
+    @classmethod
+    def from_env(cls) -> "SchedulerConfig":
+        """Load scheduler config from environment."""
+        return cls(
+            interval_hours=int(os.getenv("SCAN_INTERVAL_HOURS", cls.interval_hours)),
+            enabled=os.getenv("SCAN_ENABLED", "true").lower() == "true",
+            run_on_start=os.getenv("SCAN_ON_START", "false").lower() == "true",
+            quiet_hours_start=int(os.getenv("QUIET_HOURS_START")) if os.getenv("QUIET_HOURS_START") else None,
+            quiet_hours_end=int(os.getenv("QUIET_HOURS_END")) if os.getenv("QUIET_HOURS_END") else None
+        )
+
+    @property
+    def cron_expression(self) -> str:
+        """Generate cron expression for the interval."""
+        if self.interval_hours == 1:
+            return "0 * * * *"  # Every hour
+        elif self.interval_hours == 24:
+            return "0 8 * * *"  # Once daily at 8 AM
+        else:
+            return f"0 */{self.interval_hours} * * *"  # Every N hours
 
 
 @dataclass
@@ -193,6 +231,7 @@ class Settings:
         self.ai = AIConfig.from_env()
         self.database = DatabaseConfig.from_env()
         self.rate_limit = RateLimitConfig()
+        self.scheduler = SchedulerConfig.from_env()
 
     @property
     def has_notifications(self) -> bool:

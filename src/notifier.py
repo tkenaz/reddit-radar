@@ -7,11 +7,15 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+import json
+import logging
 
 from .config import get_settings, TelegramConfig, SlackConfig, EmailConfig
+
+logger = logging.getLogger(__name__)
 
 
 class Priority(Enum):
@@ -46,7 +50,7 @@ class BaseNotifier(ABC):
 
 
 class TelegramNotifier(BaseNotifier):
-    """Telegram notification sender."""
+    """Telegram notification sender with inline keyboard support."""
 
     def __init__(self, config: TelegramConfig):
         self.config = config
@@ -88,8 +92,160 @@ class TelegramNotifier(BaseNotifier):
             return True
 
         except Exception as e:
-            print(f"Telegram notification failed: {e}")
+            logger.error(f"Telegram notification failed: {e}")
             return False
+
+    def send_draft_for_approval(
+        self,
+        draft_id: str,
+        post_title: str,
+        post_url: str,
+        subreddit: str,
+        intent: str,
+        confidence: float,
+        draft_content: str,
+        score: int = 0,
+        comments: int = 0,
+    ) -> Optional[int]:
+        """
+        Send a draft response for approval with inline keyboard.
+
+        Returns message_id if successful, None otherwise.
+        """
+        if not self.is_configured():
+            return None
+
+        try:
+            # Normalize intent to string
+            intent_str = intent.value if hasattr(intent, 'value') else str(intent)
+
+            # Format message
+            intent_emoji = {
+                "hot_lead": "🔥",
+                "partnership": "🤝",
+                "content_idea": "💡",
+            }
+            emoji = intent_emoji.get(intent_str, "📝")
+
+            message = (
+                f"{emoji} *{intent_str.upper()}* ({confidence:.0%})\n\n"
+                f"*{self._escape_markdown(post_title[:100])}*\n"
+                f"r/{subreddit} | ↑{score} | 💬{comments}\n\n"
+                f"---\n\n"
+                f"*Draft Response:*\n"
+                f"```\n{draft_content}\n```\n\n"
+                f"[View Post]({post_url})"
+            )
+
+            # Inline keyboard with approval buttons
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Post", "callback_data": f"post:{draft_id}"},
+                        {"text": "✏️ Edit", "callback_data": f"edit:{draft_id}"},
+                        {"text": "❌ Skip", "callback_data": f"skip:{draft_id}"},
+                    ]
+                ]
+            }
+
+            response = requests.post(
+                f"{self.api_url}/sendMessage",
+                json={
+                    "chat_id": self.config.chat_id,
+                    "text": message,
+                    "parse_mode": "Markdown",
+                    "reply_markup": keyboard,
+                    "disable_web_page_preview": True,
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("ok"):
+                return result["result"]["message_id"]
+            return None
+
+        except Exception as e:
+            logger.error(f"Telegram draft notification failed: {e}")
+            return None
+
+    def update_message(
+        self,
+        message_id: int,
+        new_text: str,
+        remove_keyboard: bool = True
+    ) -> bool:
+        """Update an existing message (e.g., after approval)."""
+        if not self.is_configured():
+            return False
+
+        try:
+            payload = {
+                "chat_id": self.config.chat_id,
+                "message_id": message_id,
+                "text": new_text,
+                "parse_mode": "Markdown",
+            }
+
+            if remove_keyboard:
+                payload["reply_markup"] = {"inline_keyboard": []}
+
+            response = requests.post(
+                f"{self.api_url}/editMessageText",
+                json=payload,
+                timeout=10
+            )
+            response.raise_for_status()
+            return True
+
+        except Exception as e:
+            logger.error(f"Telegram message update failed: {e}")
+            return False
+
+    def answer_callback(self, callback_query_id: str, text: str = "") -> bool:
+        """Answer a callback query (removes loading state from button)."""
+        try:
+            response = requests.post(
+                f"{self.api_url}/answerCallbackQuery",
+                json={
+                    "callback_query_id": callback_query_id,
+                    "text": text,
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Telegram callback answer failed: {e}")
+            return False
+
+    def send_confirmation(self, text: str) -> bool:
+        """Send a simple confirmation message."""
+        if not self.is_configured():
+            return False
+
+        try:
+            response = requests.post(
+                f"{self.api_url}/sendMessage",
+                json={
+                    "chat_id": self.config.chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Telegram confirmation failed: {e}")
+            return False
+
+    def _escape_markdown(self, text: str) -> str:
+        """Escape special markdown characters."""
+        for char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+            text = text.replace(char, f'\\{char}')
+        return text
 
 
 class SlackNotifier(BaseNotifier):

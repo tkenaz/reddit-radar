@@ -3,14 +3,15 @@
 Reddit Radar Scanner - Automated lead discovery from Reddit.
 
 Searches Reddit for relevant posts based on your keywords configuration,
-classifies them by intent using AI, and sends notifications.
+classifies them by intent using AI, generates response drafts, and sends notifications.
 
 Usage:
-  python -m src.scanner [--dry-run] [--classify] [--config PATH]
+  python -m src.scanner [--dry-run] [--classify] [--respond] [--config PATH]
 
 Options:
   --dry-run     Print results to console instead of sending notifications
   --classify    Enable AI intent classification (requires ANTHROPIC_API_KEY)
+  --respond     Generate draft responses using Opus 4.5 (requires --classify)
   --config      Path to keywords config file (default: config/keywords.yaml)
 """
 
@@ -22,8 +23,11 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from .reddit_client import RedditClient
-from .notifier import get_notifier, Notification, Priority
+from .notifier import get_notifier, Notification, Priority, TelegramNotifier
 from .classifier import get_classifier, Intent, Classification
+from .responder import get_responder, DraftResponse
+from .draft_store import get_draft_store
+from .config import get_settings
 
 # Setup logging
 logging.basicConfig(
@@ -159,13 +163,104 @@ def classify_posts(posts: List[Dict[str, Any]], use_ai: bool = True) -> List[tup
     return results
 
 
+def generate_responses(
+    posts_with_classifications: List[tuple[Dict[str, Any], Classification]]
+) -> Dict[str, DraftResponse]:
+    """Generate draft responses for actionable posts."""
+    responder = get_responder()
+
+    if not responder.is_available:
+        logger.warning("Response generation not available (no API key)")
+        return {}
+
+    # Filter to actionable posts only
+    actionable = [
+        (p, c) for p, c in posts_with_classifications
+        if c.is_actionable
+    ]
+
+    if not actionable:
+        logger.info("  No actionable posts for response generation")
+        return {}
+
+    logger.info(f"  Generating responses for {len(actionable)} actionable posts (Opus 4.5)...")
+
+    drafts = {}
+    for post, classification in actionable:
+        draft = responder.generate_response(post, classification)
+        if draft:
+            drafts[post['id']] = draft
+            logger.info(f"    ✍️  Draft generated for: {post['title'][:40]}...")
+
+    logger.info(f"  Generated {len(drafts)} draft responses")
+    return drafts
+
+
+def send_drafts_for_approval(
+    drafts: Dict[str, DraftResponse],
+    posts: Dict[str, Dict[str, Any]]
+) -> int:
+    """
+    Save drafts to store and send to Telegram for approval.
+
+    Returns number of drafts sent.
+    """
+    if not drafts:
+        return 0
+
+    settings = get_settings()
+    if not settings.telegram:
+        logger.warning("Telegram not configured, skipping draft approval notifications")
+        return 0
+
+    store = get_draft_store()
+    telegram = TelegramNotifier(settings.telegram)
+
+    sent_count = 0
+    for post_id, draft in drafts.items():
+        post = posts.get(post_id, {})
+
+        # Save to store
+        saved_draft = store.save_draft(
+            post_id=post_id,
+            post_url=post.get('url', ''),
+            post_title=post.get('title', 'Unknown'),
+            subreddit=post.get('subreddit', 'unknown'),
+            content=draft.content,
+            intent=draft.intent if isinstance(draft.intent, str) else str(draft.intent.value if hasattr(draft.intent, 'value') else draft.intent),
+            confidence=draft.confidence,
+        )
+
+        # Send to Telegram with approval buttons
+        message_id = telegram.send_draft_for_approval(
+            draft_id=saved_draft.id,
+            post_title=post.get('title', 'Unknown'),
+            post_url=post.get('url', ''),
+            subreddit=post.get('subreddit', 'unknown'),
+            intent=draft.intent,
+            confidence=draft.confidence,
+            draft_content=draft.content,
+            score=post.get('score', 0),
+            comments=post.get('num_comments', 0),
+        )
+
+        if message_id:
+            sent_count += 1
+            logger.info(f"    📤 Sent for approval: {post.get('title', '')[:40]}...")
+
+    logger.info(f"  Sent {sent_count} drafts for approval")
+    return sent_count
+
+
 def format_results_message(
     results: Dict[str, List[tuple[Dict[str, Any], Classification]]],
     config: Dict[str, Any],
-    classify_enabled: bool = False
+    classify_enabled: bool = False,
+    drafts: Dict[str, DraftResponse] = None
 ) -> str:
     """Format search results as notification message."""
     total_posts = sum(len(posts) for posts in results.values())
+    drafts = drafts or {}
 
     if total_posts == 0:
         return "No relevant posts found in the last scan period."
@@ -182,6 +277,8 @@ def format_results_message(
         partner = intent_counts[Intent.PARTNERSHIP]
         if hot or partner:
             msg += f" ({hot} 🔥 hot leads, {partner} 🤝 partnerships)"
+    if drafts:
+        msg += f" | ✍️ {len(drafts)} drafts"
     msg += ":\n\n"
 
     for category_key, posts in results.items():
@@ -203,6 +300,16 @@ def format_results_message(
 
             msg += f"\n   {post['url']}\n"
 
+            # Add draft response if available
+            if post['id'] in drafts:
+                draft = drafts[post['id']]
+                msg += f"\n   **Draft Response:**\n"
+                # Indent draft content
+                draft_lines = draft.content.split('\n')
+                for line in draft_lines:
+                    msg += f"   > {line}\n"
+                msg += "\n"
+
         msg += "\n---\n"
 
     return msg
@@ -211,7 +318,8 @@ def format_results_message(
 def run_scan(
     config_path: Path = DEFAULT_CONFIG,
     dry_run: bool = False,
-    classify: bool = False
+    classify: bool = False,
+    respond: bool = False
 ) -> Dict[str, Any]:
     """
     Run the Reddit scan.
@@ -220,6 +328,7 @@ def run_scan(
         config_path: Path to keywords configuration
         dry_run: If True, print to console instead of sending notifications
         classify: If True, use AI to classify post intents
+        respond: If True, generate draft responses for actionable posts
 
     Returns:
         Dict with scan results and stats
@@ -228,6 +337,7 @@ def run_scan(
     logger.info("Reddit Radar Scan Starting")
     logger.info(f"Mode: {'DRY RUN' if dry_run else 'PRODUCTION'}")
     logger.info(f"AI Classification: {'ENABLED' if classify else 'DISABLED'}")
+    logger.info(f"Response Generation: {'ENABLED (Opus 4.5)' if respond else 'DISABLED'}")
     logger.info("=" * 60)
 
     # Load config
@@ -267,16 +377,37 @@ def run_scan(
         if c.intent == Intent.HOT_LEAD
     )
 
+    # Generate response drafts if enabled
+    drafts = {}
+    if respond and classify:
+        all_classified = [
+            (p, c) for posts in results.values()
+            for p, c in posts
+        ]
+        drafts = generate_responses(all_classified)
+
+        # Build post lookup for approval workflow
+        all_posts = {p['id']: p for posts in results.values() for p, c in posts}
+
+        # Send drafts for approval (with inline buttons)
+        if drafts and not dry_run:
+            send_drafts_for_approval(drafts, all_posts)
+
     stats = {
         "total_posts": total_posts,
         "hot_leads": hot_leads,
+        "drafts_generated": len(drafts),
         "categories_with_results": len([r for r in results.values() if r]),
         "timestamp": datetime.now().isoformat()
     }
 
     # Send notification
     if total_posts > 0:
-        message = format_results_message(results, config, classify_enabled=classify)
+        message = format_results_message(
+            results, config,
+            classify_enabled=classify,
+            drafts=drafts
+        )
 
         notifier = get_notifier(include_console=dry_run)
 
@@ -288,19 +419,24 @@ def run_scan(
         else:
             priority = Priority.NORMAL
 
+        title = f"Reddit Radar: {total_posts} posts ({hot_leads} 🔥 hot leads)"
+        if drafts:
+            title += f" | ✍️ {len(drafts)} drafts"
+
         notification = Notification(
-            title=f"Reddit Radar: {total_posts} posts ({hot_leads} 🔥 hot leads)",
+            title=title,
             message=message,
             priority=priority
         )
         notifier.send(notification)
 
     logger.info("=" * 60)
-    logger.info(f"Scan completed: {total_posts} posts, {hot_leads} hot leads")
+    logger.info(f"Scan completed: {total_posts} posts, {hot_leads} hot leads, {len(drafts)} drafts")
     logger.info("=" * 60)
 
     return {
         "results": results,
+        "drafts": drafts,
         "stats": stats
     }
 
@@ -309,6 +445,12 @@ def main():
     """CLI entry point."""
     dry_run = "--dry-run" in sys.argv
     classify = "--classify" in sys.argv
+    respond = "--respond" in sys.argv
+
+    # --respond requires --classify
+    if respond and not classify:
+        classify = True
+        logger.info("Note: --respond implies --classify, enabling classification")
 
     # Parse config path
     config_path = DEFAULT_CONFIG
@@ -318,7 +460,12 @@ def main():
             config_path = Path(sys.argv[idx + 1])
 
     try:
-        run_scan(config_path=config_path, dry_run=dry_run, classify=classify)
+        run_scan(
+            config_path=config_path,
+            dry_run=dry_run,
+            classify=classify,
+            respond=respond
+        )
     except FileNotFoundError as e:
         logger.error(str(e))
         sys.exit(1)
