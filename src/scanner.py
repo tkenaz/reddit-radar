@@ -218,6 +218,11 @@ def send_drafts_for_approval(
 
     sent_count = 0
     for post_id, draft in drafts.items():
+        # Skip already processed posts
+        if store.is_post_processed(post_id):
+            logger.info(f"    ⏭️  Skipping (already processed): {posts.get(post_id, {}).get('title', '')[:40]}...")
+            continue
+
         post = posts.get(post_id, {})
 
         # Save to store

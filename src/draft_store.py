@@ -160,6 +160,15 @@ class DraftStore:
             created_at=now,
         )
 
+    def is_post_processed(self, post_id: str) -> bool:
+        """Check if a post has already been processed (any status)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT id FROM drafts WHERE post_id = ?",
+                (post_id,)
+            )
+            return cursor.fetchone() is not None
+
     def get_draft(self, draft_id: str) -> Optional[Draft]:
         """Get a draft by ID."""
         with sqlite3.connect(self.db_path) as conn:
